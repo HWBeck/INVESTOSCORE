@@ -44,12 +44,12 @@ class ScoringEngine:
     
     def _setup_scoring_criteria(self):
         """Setup scoring criteria and thresholds."""
-        # Score thresholds for recommendations
+        # Score thresholds for recommendations (adjusted for neutral start)
         self.score_thresholds = {
-            'strong_buy': 80,
-            'buy': 65,
-            'hold': 45,
-            'sell': 35
+            'strong_buy': 75,  # Clearly positive
+            'buy': 60,        # Somewhat positive
+            'hold': 40,       # Neutral/Slightly negative
+            'sell': 30        # Clearly negative
         }
         
         # Confidence level thresholds
@@ -149,19 +149,29 @@ class ScoringEngine:
     
     def _calculate_category_scores(self, 
                                  content_analysis: ContentAnalysis) -> Dict[str, float]:
-        """Calculate base scores for each category."""
+        """Calculate base scores for each category starting from neutral position."""
         scores = {}
         
         for category, weight in self.category_weights.items():
-            # Get raw category score
-            raw_score = content_analysis.categories.get(category, 0)
+            # Start from a neutral position (50)
+            base_score = 50
             
             # Get keyword relevance
-            keyword_count = len(content_analysis.keywords.get(category, []))
-            keyword_factor = min(1 + (keyword_count * 0.1), 1.5)
+            keywords = content_analysis.keywords.get(category, [])
+            keyword_count = len(keywords)
             
-            # Calculate weighted score
-            scores[category] = min(raw_score * keyword_factor, 100)
+            # Adjust score based on keywords (each keyword can add up to 5 points)
+            keyword_adjustment = min(keyword_count * 5, 25)
+            
+            # Get sentiment impact for this category
+            sentiment = content_analysis.sentiment['financial']
+            sentiment_adjustment = (sentiment - 0.5) * 20  # Can adjust ±10 points
+            
+            # Calculate final category score
+            final_score = base_score + keyword_adjustment + sentiment_adjustment
+            
+            # Ensure score stays within 0-100 range
+            scores[category] = max(0, min(100, final_score))
         
         return scores
     
@@ -271,21 +281,21 @@ class ScoringEngine:
                              category_scores: Dict[str, float],
                              confidence_levels: Dict[str, str],
                              risk_factors: List[str]) -> float:
-        """Calculate final investment score."""
+        """Calculate final investment score starting from neutral position."""
         # 1. Calculate weighted category score
         weighted_score = sum(
             score * self.category_weights[category]
             for category, score in category_scores.items()
         )
         
-        # 2. Apply confidence adjustment
+        # 2. Apply confidence adjustment (less punitive)
         confidence_factor = sum(
-            1.0 if level == 'high' else 0.8 if level == 'medium' else 0.6
+            1.0 if level == 'high' else 0.9 if level == 'medium' else 0.8
             for level in confidence_levels.values()
         ) / len(confidence_levels)
         
-        # 3. Apply risk factor penalty
-        risk_penalty = len(risk_factors) * self.risk_weight
+        # 3. Apply gentler risk factor penalty
+        risk_penalty = min(len(risk_factors) * (self.risk_weight * 5), 20)  # Cap at 20 points
         
         # Calculate final score (0-100 range)
         final_score = max(0, min(100,
