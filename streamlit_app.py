@@ -10,7 +10,10 @@ import tempfile
 import os
 from typing import Dict, List
 
-from investoscore.document_processor import DocumentProcessor
+from in    elif uploaded_files:
+        st.warning("Please enter a company name to begin analysis.")
+    elif company_name:
+        st.warning("Please upload at least one document to analyze.")e.document_processor import DocumentProcessor
 from investoscore.content_analyzer import ContentAnalyzer
 from investoscore.scoring_engine import ScoringEngine
 
@@ -152,6 +155,69 @@ def main():
                 - Analysis Confidence: {analysis_result.confidence:.1%}
                 - Primary Sentiment: {'Positive' if analysis_result.sentiment['overall'] > 0.6 else 'Negative' if analysis_result.sentiment['overall'] < 0.4 else 'Neutral'}
                 """)
+                
+                # Display Results in tabs
+                tab1, tab2, tab3 = st.tabs([
+                    "📊 Score & Recommendations",
+                    "📈 Detailed Analysis",
+                    "📄 Document Insights"
+                ])
+                
+                with tab1:
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        st.metric(
+                            f"Investment Score for {company_name}",
+                            f"{score_result.final_score:.1f}/100",
+                            f"Data Completeness: {score_result.data_completeness:.1%}"
+                        )
+                        
+                        st.subheader("📋 Key Recommendations")
+                        for rec in score_result.recommendations:
+                            st.write(f"• {rec}")
+                        
+                        if score_result.risk_factors:
+                            st.subheader("⚠️ Risk Factors")
+                            for risk in score_result.risk_factors:
+                                st.write(f"• {risk}")
+                    
+                    with col2:
+                        st.subheader("🎯 Sentiment Analysis")
+                        sentiment_df = pd.DataFrame({
+                            'Type': ['Overall', 'Financial'],
+                            'Score': [
+                                f"{analysis_result.sentiment['overall']:.1%}",
+                                f"{analysis_result.sentiment['financial']:.1%}"
+                            ]
+                        })
+                        st.dataframe(sentiment_df)
+                
+                with tab2:
+                    st.subheader("📊 Category Analysis")
+                    col3, col4 = st.columns([1, 1])
+                    
+                    with col3:
+                        fig = plot_category_scores(score_result.category_scores)
+                        st.plotly_chart(fig)
+                    
+                    with col4:
+                        st.dataframe(
+                            create_score_table(score_result),
+                            hide_index=True
+                        )
+                
+                with tab3:
+                    st.subheader("📑 Document Analysis")
+                    
+                    for category, keywords in analysis_result.keywords.items():
+                        if keywords:
+                            with st.expander(f"{category.replace('_', ' ').title()} Keywords"):
+                                st.write(", ".join(keywords))
+                    
+                    if analysis_result.entities:
+                        with st.expander("📌 Key Entities Detected"):
+                            for entity in analysis_result.entities:
+                                st.write(f"• {entity['value']} ({entity['type']})")
     elif uploaded_files:
         st.warning("Please enter a company name to begin analysis.")
     elif company_name:
@@ -227,30 +293,6 @@ def main():
                             for entity in analysis_result.entities:
                                 st.write(f"• {entity['value']} ({entity['type']}")
                 
-                # Category Scores
-                st.subheader("📊 Category Analysis")
-                col3, col4 = st.columns([1, 1])
-                
-                with col3:
-                    # Radar Chart
-                    fig = plot_category_scores(score_result.category_scores)
-                    st.plotly_chart(fig)
-                
-                with col4:
-                    # Score Table
-                    st.dataframe(
-                        create_score_table(score_result),
-                        hide_index=True
-                    )
-                
-                # Keywords Found
-                st.subheader("🔑 Key Findings")
-                for category, keywords in analysis_result.keywords.items():
-                    if keywords:
-                        st.write(f"**{category.replace('_', ' ').title()}:**")
-                        st.write(", ".join(keywords))
-                
-            finally:
     else:
         # Display welcome message
         st.info(
