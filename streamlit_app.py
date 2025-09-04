@@ -71,6 +71,41 @@ def create_score_table(score_result) -> pd.DataFrame:
         })
     return pd.DataFrame(data)
 
+def process_documents(company_name: str, uploaded_files: list):
+    """Process multiple documents and aggregate results."""
+    all_content = ""
+    all_analyses = []
+    
+    for uploaded_file in uploaded_files:
+        try:
+            # Create a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                file_path = tmp_file.name
+            
+            try:
+                # Process document
+                doc_result = st.session_state.processor.process_document(file_path)
+                all_content += doc_result.content + "\n\n"
+                
+            finally:
+                # Clean up temporary file
+                os.unlink(file_path)
+                
+        except Exception as e:
+            st.error(f"Error processing {uploaded_file.name}: {str(e)}")
+            return None
+    
+    try:
+        # Analyze aggregated content
+        analysis_result = st.session_state.analyzer.analyze_content(all_content)
+        score_result = st.session_state.scoring_engine.generate_score(analysis_result)
+        
+        return analysis_result, score_result
+    except Exception as e:
+        st.error(f"Error analyzing content: {str(e)}")
+        return None
+
 def main():
     """Main Streamlit application."""
     initialize_session_state()
@@ -80,68 +115,117 @@ def main():
     st.subheader("AI-Powered Investment Analysis")
     
     # Sidebar
+    st.sidebar.header("Company Information")
+    company_name = st.sidebar.text_input("Company Name", "")
+    
     st.sidebar.header("Upload Documents")
-    uploaded_file = st.sidebar.file_uploader(
-        "Choose a file (PDF, Excel, or Text)",
-        type=['pdf', 'xlsx', 'txt']
+    uploaded_files = st.sidebar.file_uploader(
+        "Choose files (PDF, Excel, or Text)",
+        type=['pdf', 'xlsx', 'txt'],
+        accept_multiple_files=True
     )
     
+    # Document list display
+    if uploaded_files:
+        st.sidebar.subheader("📄 Uploaded Documents")
+        for file in uploaded_files:
+            st.sidebar.text(f"• {file.name}")
+    
     # Main content area
-    if uploaded_file is not None:
-        try:
-            # Create a temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
-                tmp_file.write(uploaded_file.getvalue())
-                file_path = tmp_file.name
+    if uploaded_files and company_name:
+        with st.spinner(f"Analyzing {len(uploaded_files)} documents for {company_name}..."):
+            results = process_documents(company_name, uploaded_files)
             
-            try:
-                with st.spinner("Processing document..."):
-                    # Process document
-                    doc_result = st.session_state.processor.process_document(file_path)
-                    
-                with st.spinner("Analyzing content..."):
-                    # Analyze content
-                    analysis_result = st.session_state.analyzer.analyze_content(doc_result.content)
-                    st.session_state.last_analysis = analysis_result
-                    
-                with st.spinner("Generating investment score..."):
-                    # Generate score
-                    score_result = st.session_state.scoring_engine.generate_score(analysis_result)
-                    st.session_state.last_score = score_result
+            if results:
+                analysis_result, score_result = results
+                st.session_state.last_analysis = analysis_result
+                st.session_state.last_score = score_result
                 
-                # Display Results
-                col1, col2 = st.columns([2, 1])
+                # Company header with metadata
+                st.header(f"📊 Analysis: {company_name}")
+                st.caption(f"Based on {len(uploaded_files)} documents • Generated on {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
                 
-                with col1:
-                    # Overall Score
-                    st.metric(
-                        "Investment Score",
-                        f"{score_result.final_score:.1f}/100",
-                        f"Data Completeness: {score_result.data_completeness:.1%}"
-                    )
-                    
-                    # Recommendations
-                    st.subheader("📋 Recommendations")
-                    for rec in score_result.recommendations:
-                        st.write(f"• {rec}")
-                    
-                    # Risk Factors
-                    if score_result.risk_factors:
-                        st.subheader("⚠️ Risk Factors")
-                        for risk in score_result.risk_factors:
-                            st.write(f"• {risk}")
+                # Add company analysis summary
+                st.info(f"""
+                **Company Overview:**
+                - Documents Analyzed: {len(uploaded_files)}
+                - Analysis Confidence: {analysis_result.confidence:.1%}
+                - Primary Sentiment: {'Positive' if analysis_result.sentiment['overall'] > 0.6 else 'Negative' if analysis_result.sentiment['overall'] < 0.4 else 'Neutral'}
+                """)
+    elif uploaded_files:
+        st.warning("Please enter a company name to begin analysis.")
+    elif company_name:
+        st.warning("Please upload at least one document to analyze.")
                 
-                with col2:
-                    # Sentiment Analysis
-                    st.subheader("🎯 Sentiment Analysis")
-                    sentiment_df = pd.DataFrame({
-                        'Type': ['Overall', 'Financial'],
-                        'Score': [
-                            f"{analysis_result.sentiment['overall']:.1%}",
-                            f"{analysis_result.sentiment['financial']:.1%}"
-                        ]
-                    })
-                    st.dataframe(sentiment_df)
+                # Display Results in tabs
+                tab1, tab2, tab3 = st.tabs(["📈 Score & Recommendations", "📊 Detailed Analysis", "📑 Document Insights"])
+                
+                with tab1:
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        # Overall Score with company name
+                        st.metric(
+                            f"Investment Score for {company_name}",
+                            f"{score_result.final_score:.1f}/100",
+                            f"Data Completeness: {score_result.data_completeness:.1%}"
+                        )
+                        
+                        # Recommendations
+                        st.subheader("📋 Key Recommendations")
+                        for rec in score_result.recommendations:
+                            st.write(f"• {rec}")
+                        
+                        # Risk Factors
+                        if score_result.risk_factors:
+                            st.subheader("⚠️ Risk Factors")
+                            for risk in score_result.risk_factors:
+                                st.write(f"• {risk}")
+                    
+                    with col2:
+                        # Sentiment Analysis
+                        st.subheader("🎯 Sentiment Analysis")
+                        sentiment_df = pd.DataFrame({
+                            'Type': ['Overall', 'Financial'],
+                            'Score': [
+                                f"{analysis_result.sentiment['overall']:.1%}",
+                                f"{analysis_result.sentiment['financial']:.1%}"
+                            ]
+                        })
+                        st.dataframe(sentiment_df)
+                
+                with tab2:
+                    # Category Analysis
+                    st.subheader("📊 Category Analysis")
+                    col3, col4 = st.columns([1, 1])
+                    
+                    with col3:
+                        # Radar Chart
+                        fig = plot_category_scores(score_result.category_scores)
+                        st.plotly_chart(fig)
+                    
+                    with col4:
+                        # Score Table
+                        st.dataframe(
+                            create_score_table(score_result),
+                            hide_index=True
+                        )
+                
+                with tab3:
+                    # Document Analysis
+                    st.subheader("📑 Document Analysis")
+                    
+                    # Keywords Found
+                    for category, keywords in analysis_result.keywords.items():
+                        if keywords:
+                            with st.expander(f"{category.replace('_', ' ').title()} Keywords"):
+                                st.write(", ".join(keywords))
+                    
+                    # Entities Found
+                    if analysis_result.entities:
+                        with st.expander("📌 Key Entities Detected"):
+                            for entity in analysis_result.entities:
+                                st.write(f"• {entity['value']} ({entity['type']})")
                 
                 # Category Scores
                 st.subheader("📊 Category Analysis")
