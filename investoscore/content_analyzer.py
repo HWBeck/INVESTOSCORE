@@ -339,75 +339,88 @@ class ContentAnalyzer:
             category_score = 0
             pattern = self.keyword_patterns[category]
             
-            # Start with a lower base score (30 instead of 50)
-            base_score = 30
+            # Start with a very low base score
+            base_score = 15
             
             # Count total keyword occurrences for this category
             total_matches = len(pattern.findall(content_lower))
             if total_matches == 0:
-                scores[category] = base_score * 0.5  # Penalize categories with no matches
+                scores[category] = base_score * 0.3  # Severely penalize categories with no matches
                 continue
             
-            # Track meaningful matches
+            # Track different types of matches
             meaningful_matches = 0
             strong_patterns = 0
+            weak_patterns = 0
+            negative_matches = 0
             
             # Analyze each sentence for context
             for sentence in sentences:
-                # Check for keyword matches in this sentence
                 matches = pattern.findall(sentence.lower())
                 if matches:
-                    # Get context score for each match
                     for keyword in matches:
                         context_score = self._analyze_keyword_context(keyword, sentence)
                         proximity_score = self._analyze_keyword_proximity(sentence, info['keywords'])
                         pattern_score = self._check_phrase_patterns(sentence, category)
                         
-                        # Only count as meaningful if context is positive
-                        if context_score > 1.0:
-                            meaningful_matches += 1
-                        
-                        # Track strong pattern matches
-                        if pattern_score > 1.2:
+                        # Classify the match based on scores
+                        if context_score > 1.2 and pattern_score > 1.2:
                             strong_patterns += 1
+                        elif context_score < 0.8 or pattern_score < 0.8:
+                            negative_matches += 1
+                        elif context_score > 1.0:
+                            meaningful_matches += 1
+                        else:
+                            weak_patterns += 1
                         
-                        # Calculate match impact with stricter criteria
-                        match_score = (
-                            context_score * 0.5 +     # Context is most important
-                            proximity_score * 0.2 +   # Proximity matters less
-                            pattern_score * 0.3       # Patterns are important
-                        )
+                        # More aggressive diminishing returns
+                        impact = (
+                            context_score * 0.4 +
+                            proximity_score * 0.2 +
+                            pattern_score * 0.4
+                        ) / (1 + (category_score * 0.2))
                         
-                        # Add to category score, but with diminishing returns
-                        category_score += match_score / (1 + (category_score * 0.1))
+                        category_score += impact
             
-            # Calculate final score components
+            # Calculate quality metrics
             keyword_coverage = meaningful_matches / len(info['keywords'])
-            pattern_bonus = min(strong_patterns * 5, 20)  # Cap pattern bonus at 20
+            quality_ratio = (strong_patterns + meaningful_matches) / (weak_patterns + negative_matches + 1)
             
-            # Combine components with base score
-            final_score = base_score + (
-                (category_score * 15) +              # Basic score contribution
-                (keyword_coverage * 25) +            # Reward broad keyword coverage
-                pattern_bonus                        # Reward strong patterns
+            # Calculate component scores
+            quality_score = min(quality_ratio * 20, 40)  # Max 40 points from quality
+            coverage_score = keyword_coverage * 30        # Max 30 points from coverage
+            pattern_score = min(strong_patterns * 3, 15)  # Max 15 points from strong patterns
+            
+            # Apply penalties
+            penalty = negative_matches * 5
+            
+            # Combine scores with base
+            final_score = max(0, base_score +
+                quality_score +
+                coverage_score +
+                pattern_score -
+                penalty
             )
             
-            # Apply category weight and normalize
+            # Apply exponential difficulty for high scores
+            if final_score > 60:
+                excess = final_score - 60
+                final_score = 60 + (excess * 0.5)  # Half the rate of increase above 60
+            if final_score > 80:
+                excess = final_score - 80
+                final_score = 80 + (excess * 0.25)  # Quarter the rate of increase above 80
+            
+            # Apply category weight
             weighted_score = final_score * info['weight']
-            
-            # Ensure differentiation between categories
-            if weighted_score > 80:
-                # Make it harder to get very high scores
-                weighted_score = 80 + (weighted_score - 80) * 0.5
-            
             scores[category] = min(weighted_score, 100)
         
-        # Normalize scores relative to each other
-        max_score = max(scores.values())
-        if max_score > 0:
-            for category in scores:
-                relative_score = scores[category] / max_score
-                scores[category] = scores[category] * relative_score
+        # Force differentiation between categories
+        score_list = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        for i, (category, score) in enumerate(score_list):
+            # Apply progressive penalties to lower-ranked categories
+            if i > 0:
+                penalty_factor = 1.0 - (i * 0.15)  # Each rank reduces score by 15%
+                scores[category] = score * penalty_factor
         
         return scores
         
@@ -423,40 +436,54 @@ class ContentAnalyzer:
     
     def _analyze_keyword_context(self, keyword: str, sentence: str) -> float:
         """Analyze the context around a keyword to determine its impact."""
-        # Define positive and negative context words
+        # Define positive and negative context words with weights
         positive_words = {
-            'increase', 'growth', 'profit', 'strong', 'positive', 'success',
-            'improved', 'growing', 'efficient', 'leading', 'innovative',
-            'opportunity', 'advantage', 'successful', 'excellent', 'robust'
+            'significant': 0.4, 'exceptional': 0.5, 'substantial': 0.4,
+            'remarkable': 0.4, 'outstanding': 0.5, 'excellent': 0.5,
+            'superior': 0.4, 'leading': 0.3, 'dominant': 0.4,
+            'robust': 0.3, 'strong': 0.3, 'successful': 0.3,
+            'innovative': 0.3, 'efficient': 0.2, 'improved': 0.2
         }
         negative_words = {
-            'decrease', 'decline', 'loss', 'weak', 'negative', 'failure',
-            'poor', 'risk', 'threat', 'challenging', 'difficult', 'concern',
-            'problem', 'uncertain', 'unstable', 'volatile'
+            'significant': -0.5, 'severe': -0.5, 'substantial': -0.5,
+            'critical': -0.4, 'concerning': -0.4, 'weak': -0.4,
+            'poor': -0.4, 'declining': -0.4, 'unstable': -0.4,
+            'volatile': -0.3, 'challenging': -0.3, 'difficult': -0.3,
+            'uncertain': -0.3, 'risky': -0.3, 'problematic': -0.3
         }
         
-        # Get words around the keyword (window of 5 words before and after)
+        # Get words around the keyword (window of 6 words before and after)
         words = sentence.lower().split()
         try:
             keyword_index = words.index(keyword.lower())
-            start = max(0, keyword_index - 5)
-            end = min(len(words), keyword_index + 6)
-            context_words = set(words[start:end])
+            start = max(0, keyword_index - 6)
+            end = min(len(words), keyword_index + 7)
+            context_words = words[start:end]
             
-            # Calculate sentiment score based on surrounding words
-            positive_count = len(context_words & positive_words)
-            negative_count = len(context_words & negative_words)
+            # Calculate weighted sentiment score
+            sentiment_score = 0
+            word_count = 0
             
-            if positive_count == 0 and negative_count == 0:
-                return 1.0  # Neutral context
+            for word in context_words:
+                if word in positive_words:
+                    sentiment_score += positive_words[word]
+                    word_count += 1
+                elif word in negative_words:
+                    sentiment_score += negative_words[word]
+                    word_count += 1
             
-            # Return a score between 0.5 and 1.5
-            base_score = 1.0
-            sentiment_impact = (positive_count - negative_count) * 0.25
-            return max(0.5, min(1.5, base_score + sentiment_impact))
+            if word_count == 0:
+                return 0.9  # Slightly negative for neutral context
+            
+            # Calculate final score with stronger bias towards negative
+            base_score = 0.9  # Start slightly below neutral
+            sentiment_impact = sentiment_score / (word_count * 0.8)  # Increase impact
+            
+            # More aggressive scoring range (0.3 to 1.4)
+            return max(0.3, min(1.4, base_score + sentiment_impact))
             
         except ValueError:
-            return 1.0  # Keyword not found (shouldn't happen)
+            return 0.9  # Slightly negative for no context
     
     def _analyze_keyword_proximity(self, sentence: str, keywords: List[str]) -> float:
         """Analyze how close related keywords appear together."""
