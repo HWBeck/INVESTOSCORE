@@ -158,7 +158,7 @@ def main():
         st.warning("Please upload at least one document to analyze.")
                 
                 # Display Results in tabs
-                tab1, tab2, tab3 = st.tabs(["📈 Score & Recommendations", "📊 Detailed Analysis", "📑 Document Insights"])
+                tab1, tab2, tab3 = st.tabs(["� Score & Recommendations", "� Detailed Analysis", "� Document Insights"])
                 
                 with tab1:
                     col1, col2 = st.columns([2, 1])
@@ -225,7 +225,7 @@ def main():
                     if analysis_result.entities:
                         with st.expander("📌 Key Entities Detected"):
                             for entity in analysis_result.entities:
-                                st.write(f"• {entity['value']} ({entity['type']})")
+                                st.write(f"• {entity['value']} ({entity['type']}")
                 
                 # Category Scores
                 st.subheader("📊 Category Analysis")
@@ -251,12 +251,6 @@ def main():
                         st.write(", ".join(keywords))
                 
             finally:
-                # Clean up temporary file
-                os.unlink(file_path)
-                
-        except Exception as e:
-            st.error(f"Error processing file: {str(e)}")
-    
     else:
         # Display welcome message
         st.info(
