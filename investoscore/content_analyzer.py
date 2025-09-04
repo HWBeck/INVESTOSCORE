@@ -333,10 +333,24 @@ class ContentAnalyzer:
         """Classify content into investment categories with advanced analysis."""
         scores = {}
         sentences = self._split_into_sentences(content)
+        content_lower = content.lower()
         
         for category, info in self.categories.items():
             category_score = 0
             pattern = self.keyword_patterns[category]
+            
+            # Start with a lower base score (30 instead of 50)
+            base_score = 30
+            
+            # Count total keyword occurrences for this category
+            total_matches = len(pattern.findall(content_lower))
+            if total_matches == 0:
+                scores[category] = base_score * 0.5  # Penalize categories with no matches
+                continue
+            
+            # Track meaningful matches
+            meaningful_matches = 0
+            strong_patterns = 0
             
             # Analyze each sentence for context
             for sentence in sentences:
@@ -349,17 +363,51 @@ class ContentAnalyzer:
                         proximity_score = self._analyze_keyword_proximity(sentence, info['keywords'])
                         pattern_score = self._check_phrase_patterns(sentence, category)
                         
-                        # Combine scores with weights
+                        # Only count as meaningful if context is positive
+                        if context_score > 1.0:
+                            meaningful_matches += 1
+                        
+                        # Track strong pattern matches
+                        if pattern_score > 1.2:
+                            strong_patterns += 1
+                        
+                        # Calculate match impact with stricter criteria
                         match_score = (
-                            context_score * 0.4 +    # Context is most important
-                            proximity_score * 0.3 +  # Proximity next
-                            pattern_score * 0.3      # Patterns also matter
+                            context_score * 0.5 +     # Context is most important
+                            proximity_score * 0.2 +   # Proximity matters less
+                            pattern_score * 0.3       # Patterns are important
                         )
-                        category_score += match_score
+                        
+                        # Add to category score, but with diminishing returns
+                        category_score += match_score / (1 + (category_score * 0.1))
             
-            # Normalize the score to 0-100 range
-            normalized_score = min(category_score * info['weight'] * 10, 100)
-            scores[category] = normalized_score
+            # Calculate final score components
+            keyword_coverage = meaningful_matches / len(info['keywords'])
+            pattern_bonus = min(strong_patterns * 5, 20)  # Cap pattern bonus at 20
+            
+            # Combine components with base score
+            final_score = base_score + (
+                (category_score * 15) +              # Basic score contribution
+                (keyword_coverage * 25) +            # Reward broad keyword coverage
+                pattern_bonus                        # Reward strong patterns
+            )
+            
+            # Apply category weight and normalize
+            weighted_score = final_score * info['weight']
+            
+            # Ensure differentiation between categories
+            if weighted_score > 80:
+                # Make it harder to get very high scores
+                weighted_score = 80 + (weighted_score - 80) * 0.5
+            
+            scores[category] = min(weighted_score, 100)
+        
+        # Normalize scores relative to each other
+        max_score = max(scores.values())
+        if max_score > 0:
+            for category in scores:
+                relative_score = scores[category] / max_score
+                scores[category] = scores[category] * relative_score
         
         return scores
         
@@ -442,42 +490,65 @@ class ContentAnalyzer:
     
     def _check_phrase_patterns(self, sentence: str, category: str) -> float:
         """Check for specific phrases that indicate strong relevance."""
-        # Define phrase patterns for each category
+        # Define phrase patterns for each category with scores
         category_patterns = {
             'financial_health': [
-                r'strong (financial|fiscal) (performance|results)',
-                r'(healthy|robust) (balance sheet|cash flow)',
-                r'(significant|substantial) (revenue|profit) growth'
+                (r'strong (financial|fiscal) (performance|results)', 1.5),
+                (r'(healthy|robust) (balance sheet|cash flow)', 1.4),
+                (r'(significant|substantial) (revenue|profit) growth', 1.3),
+                (r'declining (revenue|profit|margin)', 0.7),
+                (r'weak (financial|fiscal) (performance|results)', 0.6),
+                (r'(concerning|poor) (cash flow|liquidity)', 0.5)
             ],
             'valuation': [
-                r'(attractive|fair) valuation',
-                r'(trading|priced) (at|below|above) (market|peer)',
-                r'(strong|compelling) (investment|value) opportunity'
+                (r'significantly (undervalued|below) (peer|market|intrinsic) value', 1.5),
+                (r'attractive (valuation|multiple) compared to peers', 1.4),
+                (r'premium valuation', 0.7),
+                (r'overvalued (compared|relative) to peers', 0.6),
+                (r'expensive (valuation|multiple)', 0.5)
             ],
             'business_model': [
-                r'(sustainable|proven|successful) business model',
-                r'competitive (advantage|edge|moat)',
-                r'market (leader|leading|leadership)'
+                (r'industry(-|\s)leading (technology|platform|solution)', 1.5),
+                (r'unique (competitive advantage|market position)', 1.4),
+                (r'proven (revenue|business) model', 1.3),
+                (r'unproven business model', 0.7),
+                (r'significant competition', 0.6),
+                (r'losing market share', 0.5)
             ],
             'management_quality': [
-                r'experienced (management|leadership) team',
-                r'track record of (success|execution)',
-                r'strong (governance|leadership)'
+                (r'exceptional (leadership|management) track record', 1.5),
+                (r'proven ability to execute', 1.4),
+                (r'strong governance (framework|practices)', 1.3),
+                (r'management turnover', 0.7),
+                (r'governance concerns', 0.6),
+                (r'inexperienced (management|leadership)', 0.5)
             ],
             'market_opportunity': [
-                r'(growing|expanding|large) market opportunity',
-                r'(strong|favorable) market position',
-                r'(significant|substantial) growth potential'
+                (r'dominant market (position|share|leader)', 1.5),
+                (r'rapidly expanding market opportunity', 1.4),
+                (r'strong growth trajectory', 1.3),
+                (r'market saturation', 0.7),
+                (r'declining market share', 0.6),
+                (r'intense competition', 0.5)
             ]
         }
         
         # Check for matches in relevant patterns
         patterns = category_patterns.get(category, [])
-        matches = sum(1 for pattern in patterns 
-                     if re.search(pattern, sentence.lower()))
+        total_score = 1.0
+        matches_found = False
         
-        # Return score based on matches (1.0 base, up to 2.0 for strong matches)
-        return 1.0 + (matches * 0.5)
+        for pattern, score in patterns:
+            if re.search(pattern, sentence.lower()):
+                total_score *= score
+                matches_found = True
+        
+        # If no matches found, return neutral score
+        if not matches_found:
+            return 1.0
+            
+        # Cap the final score
+        return min(max(total_score, 0.5), 1.5)
     
     def _extract_keywords(self, content: str) -> Dict[str, List[str]]:
         """Extract relevant keywords for each category."""
